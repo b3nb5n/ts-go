@@ -1,4 +1,4 @@
-package tygo
+package tsgo
 
 import (
 	"log"

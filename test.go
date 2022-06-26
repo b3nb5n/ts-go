@@ -1,4 +1,4 @@
-package simple
+package main
 
 import "github.com/google/uuid"
 
@@ -6,7 +6,6 @@ import "github.com/google/uuid"
 type ComplexType map[string]map[uint16]*uint32
 
 type UserRole = string
-
 const (
 	UserRoleDefault UserRole = "viewer"
 	UserRoleEditor  UserRole = "editor" // Line comments are also kept
@@ -29,7 +28,8 @@ type UserEntry struct {
 	Role               UserRole `json:"role"`
 
 	Complex    ComplexType `json:"complex"`
-	unexported bool        // Unexported fields won't be in the output
+	unexported bool        // Unexported fields are omitted
+	Ignored    bool        `tstype:"-"` // Fields with - are omitted too
 }
 
 type ListUsersResponse struct {

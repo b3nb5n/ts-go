@@ -1,4 +1,4 @@
-package tygo
+package tsgo
 
 import (
 	"fmt"
@@ -15,16 +15,15 @@ type groupContext struct {
 	iotaOffset           int
 }
 
-func (g *PackageGenerator) writeGroupDecl(s *strings.Builder, decl *ast.GenDecl) {
+func (gen *Generator) writeDecl(decl *ast.GenDecl) {
 	// This checks whether the declaration is a group declaration like:
 	// const (
 	// 	  X = 3
 	//    Y = "abc"
 	// )
 	isGroupedDeclaration := len(decl.Specs) > 1
-
 	if !isGroupedDeclaration {
-		g.writeCommentGroupIfNotNil(s, decl.Doc, 0)
+		gen.writeCommentGroupIfNotNil(decl.Doc, 0)
 	}
 
 	// We need a bit of state to handle syntax like
@@ -37,7 +36,7 @@ func (g *PackageGenerator) writeGroupDecl(s *strings.Builder, decl *ast.GenDecl)
 	//   AlsoFoo
 	// )
 	group := &groupContext{
-		isGroupedDeclaration: len(decl.Specs) > 1,
+		isGroupedDeclaration: isGroupedDeclaration,
 		doc:                  decl.Doc,
 		groupType:            "",
 		groupValue:           "",
@@ -45,21 +44,21 @@ func (g *PackageGenerator) writeGroupDecl(s *strings.Builder, decl *ast.GenDecl)
 	}
 
 	for _, spec := range decl.Specs {
-		g.writeSpec(s, spec, group)
+		gen.writeSpec(spec, group)
 	}
 }
 
-func (g *PackageGenerator) writeSpec(s *strings.Builder, spec ast.Spec, group *groupContext) {
-	// e.g. "type Foo struct {}" or "type Bar = string"
+func (gen *Generator) writeSpec(spec ast.Spec, group *groupContext) {
+	// e. "type Foo struct {}" or "type Bar = string"
 	ts, ok := spec.(*ast.TypeSpec)
 	if ok && ts.Name.IsExported() {
-		g.writeTypeSpec(s, ts, group)
+		gen.writeTypeSpec(ts, group)
 	}
 
-	// e.g. "const Foo = 123"
+	// e. "const Foo = 123"
 	vs, ok := spec.(*ast.ValueSpec)
 	if ok {
-		g.writeValueSpec(s, vs, group)
+		gen.writeValueSpec(vs, group)
 	}
 }
 
@@ -67,68 +66,63 @@ func (g *PackageGenerator) writeSpec(s *strings.Builder, spec ast.Spec, group *g
 // `type X struct { ... }`
 // or
 // `type Bar = string`
-func (g *PackageGenerator) writeTypeSpec(s *strings.Builder, ts *ast.TypeSpec, group *groupContext) {
+func (gen *Generator) writeTypeSpec(ts *ast.TypeSpec, group *groupContext) {
 	if ts.Doc != nil { // The spec has its own comment, which overrules the grouped comment.
-		g.writeCommentGroup(s, ts.Doc, 0)
+		gen.writeCommentGroup(ts.Doc, 0)
 	} else if group.isGroupedDeclaration {
-		g.writeCommentGroupIfNotNil(s, group.doc, 0)
+		gen.writeCommentGroupIfNotNil(group.doc, 0)
 	}
 
 	st, isStruct := ts.Type.(*ast.StructType)
 	if isStruct {
-		s.WriteString("export interface ")
-		s.WriteString(ts.Name.Name)
-
+		gen.writeString("export interface ")
+		gen.writeString(ts.Name.Name)
 		if ts.TypeParams != nil {
-			g.writeTypeParamsFields(s, ts.TypeParams.List)
+			gen.writeTypeParamsFields(ts.TypeParams.List)
 		}
 
-		s.WriteString(" {\n")
-		g.writeStructFields(s, st.Fields.List, 0)
-		s.WriteString("}")
+		gen.writeString(" {\n")
+		gen.writeStructFields(st.Fields.List, 0)
+		gen.writeString("}")
 	}
 
 	id, isIdent := ts.Type.(*ast.Ident)
 	if isIdent {
-		s.WriteString("export type ")
-		s.WriteString(ts.Name.Name)
-		s.WriteString(" = ")
-		s.WriteString(getIdent(id.Name))
-		s.WriteString(";")
+		gen.writeString("export type ")
+		gen.writeString(ts.Name.Name)
+		gen.writeString(" = ")
+		gen.writeString(getIdent(id.Name))
+		gen.writeString(";")
 	}
 
 	if !isStruct && !isIdent {
-		s.WriteString("export type ")
-		s.WriteString(ts.Name.Name)
-		s.WriteString(" = ")
-		g.writeType(s, ts.Type, 0, true)
-		s.WriteString(";")
-
+		gen.writeString("export type ")
+		gen.writeString(ts.Name.Name)
+		gen.writeString(" = ")
+		gen.writeType(ts.Type, 0, true)
+		gen.writeString(";")
 	}
 
 	if ts.Comment != nil {
-		s.WriteString(" // " + ts.Comment.Text())
+		gen.writeString(" // " + ts.Comment.Text())
 	} else {
-		s.WriteString("\n")
+		gen.writeString("\n")
 	}
 }
 
 // Writign of value specs, which are exported const expressions like
 // const SomeValue = 3
-func (g *PackageGenerator) writeValueSpec(s *strings.Builder, vs *ast.ValueSpec, group *groupContext) {
+func (gen *Generator) writeValueSpec(vs *ast.ValueSpec, group *groupContext) {
 	for i, name := range vs.Names {
 		group.iotaValue = group.iotaValue + 1
-		if name.Name == "_" {
-			continue
-		}
-		if !name.IsExported() {
+		if name.Name == "_" || !name.IsExported() {
 			continue
 		}
 
 		if vs.Doc != nil { // The spec has its own comment, which overrules the grouped comment.
-			g.writeCommentGroup(s, vs.Doc, 0)
+			gen.writeCommentGroup(vs.Doc, 0)
 		} else if group.isGroupedDeclaration {
-			g.writeCommentGroupIfNotNil(s, group.doc, 0)
+			gen.writeCommentGroupIfNotNil(group.doc, 0)
 		}
 
 		hasExplicitValue := len(vs.Values) > i
@@ -136,29 +130,30 @@ func (g *PackageGenerator) writeValueSpec(s *strings.Builder, vs *ast.ValueSpec,
 			group.groupType = ""
 		}
 
-		s.WriteString("export const ")
-		s.WriteString(name.Name)
+		gen.writeString("export const ")
+		gen.writeString(name.Name)
 		if vs.Type != nil {
-			s.WriteString(": ")
+			gen.writeString(": ")
 
 			tempSB := &strings.Builder{}
-			g.writeType(tempSB, vs.Type, 0, true)
+			gen.writeType(vs.Type, 0, true)
 			typeString := tempSB.String()
 
-			s.WriteString(typeString)
+			gen.writeString(typeString)
 			group.groupType = typeString
 		} else if group.groupType != "" && !hasExplicitValue {
-			s.WriteString(": ")
-			s.WriteString(group.groupType)
+			gen.writeString(": ")
+			gen.writeString(group.groupType)
 		}
 
-		s.WriteString(" = ")
+		gen.writeString(" = ")
 
 		if hasExplicitValue {
 			val := vs.Values[i]
-			tempSB := &strings.Builder{}
-			g.writeType(tempSB, val, 0, true)
-			valueString := tempSB.String()
+
+			tmpGen := NewGenerator(gen.config)
+			tmpGen.writeType(val, 0, true)
+			valueString := tmpGen.String()
 
 			if isProbablyIotaType(valueString) {
 				group.iotaOffset = basicIotaOffsetValueParse(valueString)
@@ -167,22 +162,21 @@ func (g *PackageGenerator) writeValueSpec(s *strings.Builder, vs *ast.ValueSpec,
 			} else {
 				group.groupValue = valueString
 			}
-			s.WriteString(valueString)
+			gen.writeString(valueString)
 
 		} else { // We must use the previous value or +1 in case of iota
 			valueString := group.groupValue
 			if group.groupValue == "iota" {
 				valueString = fmt.Sprint(group.iotaValue + group.iotaOffset)
 			}
-			s.WriteString(valueString)
+			gen.writeString(valueString)
 		}
 
-		s.WriteByte(';')
+		gen.writeByte(';')
 		if vs.Comment != nil {
-			s.WriteString(" // " + vs.Comment.Text())
+			gen.writeString(" // " + vs.Comment.Text())
 		} else {
-			s.WriteByte('\n')
+			gen.writeByte('\n')
 		}
-
 	}
 }
