@@ -2,235 +2,271 @@ package tsgo
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go/ast"
 	"go/token"
-
-	"github.com/fatih/structtag"
 )
 
-func (gen *Generator) writeByte(b byte) {
-	gen.out = append(gen.out, b)
+func (gen *Generator) writeIndent(s *strings.Builder, depth int) {
+	s.WriteString(strings.Repeat(gen.config.Indent, depth))
 }
 
-func (gen *Generator) writeString(s string) {
-	gen.out = append(gen.out, s...)
+// persists the state of a grouped declaration
+// across its value specifiers
+type groupDeclState struct {
+	currValue string
+	currType  string
+
+	iotaValue  int
+	iotaOffset int
 }
 
-func (gen *Generator) writeIndent(depth int) {
-	gen.writeString(strings.Repeat(gen.config.Indent, depth))
+func (gen *Generator) writeSpec(s *strings.Builder, _spec ast.Spec, groupState *groupDeclState) {
+	switch spec := _spec.(type) {
+	case *ast.TypeSpec:
+		gen.writeTypeSpec(s, spec)
+	case *ast.ValueSpec:
+		gen.writeValueSpec(s, spec, groupState)
+	}
 }
 
-func (gen *Generator) writeType(t ast.Expr, depth int, optionalParens bool) {
-	switch t := t.(type) {
-	case *ast.StarExpr:
-		if optionalParens {
-			gen.writeByte('(')
+// Writing of type specs, which are expressions like
+// `type X struct { ... }`
+// or
+// `type Bar = string`
+func (gen *Generator) writeTypeSpec(s *strings.Builder, ts *ast.TypeSpec) {
+	if !ts.Name.IsExported() {
+		return
+	}
+
+	st, isStruct := ts.Type.(*ast.StructType)
+	if isStruct {
+		s.WriteString("export interface ")
+		s.WriteString(ts.Name.Name)
+		if ts.TypeParams != nil {
+			gen.writeTypeParams(s, ts.TypeParams.List)
 		}
-		gen.writeType(t.X, depth, false)
-		gen.writeString(" | undefined")
-		if optionalParens {
-			gen.writeByte(')')
+
+		s.WriteByte(' ')
+		gen.writeStruct(s, st, 0)
+	} else {
+		s.WriteString("export type ")
+		s.WriteString(ts.Name.Name)
+		s.WriteString(" = ")
+
+		id, isIdent := ts.Type.(*ast.Ident)
+		if isIdent {
+			s.WriteString(getIdent(id.Name))
+		} else {
+			gen.writeExpr(s, ts.Type, 0)
 		}
-	case *ast.ArrayType:
-		if v, ok := t.Elt.(*ast.Ident); ok && v.String() == "byte" {
-			gen.writeString("string")
-			break
+	}
+}
+
+// Writign of value specs, which are exported const expressions like
+// const SomeValue = 3
+func (gen *Generator) writeValueSpec(s *strings.Builder, vs *ast.ValueSpec, group *groupDeclState) {
+	if vs.Type != nil {
+		tmpS := new(strings.Builder)
+		gen.writeExpr(tmpS, vs.Type, 0)
+		group.currType = tmpS.String()
+	}
+
+	for i, name := range vs.Names {
+		group.iotaValue++
+		if !name.IsExported() {
+			continue
 		}
-		gen.writeType(t.Elt, depth, true)
-		gen.writeString("[]")
-	case *ast.StructType:
-		gen.writeString("{\n")
-		gen.writeStructFields(t.Fields.List, depth+1)
-		gen.writeIndent(depth + 1)
-		gen.writeByte('}')
-	case *ast.Ident:
-		gen.writeString(getIdent(t.String()))
-	case *ast.SelectorExpr:
-		// e.g. `time.Time`
-		longType := fmt.Sprintf("%s.%s", t.X, t.Sel)
-		mappedTsType, ok := gen.config.TypeMappings[longType]
-		if ok {
-			gen.writeString(mappedTsType)
-		} else { // For unknown types we put `any`
-			gen.writeString("any")
-			gen.writeString(" /* ")
-			gen.writeString(longType)
-			gen.writeString(" */")
+
+		// if a value is explicitly defined
+		if len(vs.Values) > i {
+			tmpBuilder := new(strings.Builder)
+			gen.writeExpr(tmpBuilder, vs.Values[i], 0)
+			valueStr := tmpBuilder.String()
+
+			if strings.Contains(valueStr, "iota") {
+				group.currValue = "iota"
+				group.iotaOffset = parseIotaOffset(valueStr)
+			} else {
+				group.currValue = valueStr
+			}
+
+			// if a value is specified without a type unset the group type
+			if vs.Type == nil {
+				group.currType = ""
+			}
 		}
-	case *ast.MapType:
-		gen.writeString("{ [key: ")
-		gen.writeType(t.Key, depth, false)
-		gen.writeString("]: ")
-		gen.writeType(t.Value, depth, false)
-		gen.writeByte('}')
+
+		s.WriteString("export const ")
+		s.WriteString(name.Name)
+
+		if group.currType != "" {
+			s.WriteString(": ")
+			s.WriteString(group.currType)
+		}
+
+		s.WriteString(" = ")
+
+		if group.currValue == "iota" {
+			s.WriteString(strconv.Itoa(group.iotaValue + group.iotaOffset))
+		} else {
+			s.WriteString(group.currValue)
+		}
+	}
+}
+
+func (gen *Generator) writeExpr(s *strings.Builder, expr ast.Expr, depth int) {
+	switch t := expr.(type) {
 	case *ast.BasicLit:
-		gen.writeString(t.Value)
+		s.WriteString(t.Value)
+	case *ast.Ident:
+		s.WriteString(getIdent(t.String()))
 	case *ast.ParenExpr:
-		gen.writeByte('(')
-		gen.writeType(t.X, depth, false)
-		gen.writeByte(')')
-	case *ast.BinaryExpr:
-		gen.writeType(t.X, depth, false)
-		gen.writeByte(' ')
-		gen.writeString(t.Op.String())
-		gen.writeByte(' ')
-		gen.writeType(t.Y, depth, false)
-	case *ast.InterfaceType:
-		gen.writeInterfaceFields(t.Methods.List, depth+1)
-	case *ast.CallExpr, *ast.FuncType, *ast.ChanType:
-		gen.writeString("any")
+		s.WriteByte('(')
+		gen.writeExpr(s, t.X, depth)
+		s.WriteByte(')')
+	case *ast.StarExpr:
+		gen.writeExpr(s, t.X, depth)
+		s.WriteString(" | undefined")
+	case *ast.SelectorExpr: // e.g. `time.Time`
+		longType := fmt.Sprintf("%s.%s", t.X, t.Sel)
+		mappedType, ok := gen.config.TypeMappings[longType]
+		if ok {
+			s.WriteString(mappedType)
+		} else { // For unknown types we put `any`
+			s.WriteString("any /* ")
+			s.WriteString(longType)
+			s.WriteString(" */")
+		}
 	case *ast.UnaryExpr:
 		if t.Op == token.TILDE {
 			// We just ignore the tilde token, in Typescript extended types are
 			// put into the generic typing itself, which we can't support yet.
-			gen.writeType(t.X, depth, false)
+			gen.writeExpr(s, t.X, depth)
 		} else {
-			err := fmt.Errorf("unhandled unary expr: %v\n %T", t, t)
-			fmt.Println(err)
-			panic(err)
+			panic(fmt.Errorf("unhandled unary expr: %v\n %T", t, t))
 		}
+	case *ast.BinaryExpr:
+		gen.writeExpr(s, t.X, depth)
+		s.WriteByte(' ')
+		s.WriteString(t.Op.String())
+		s.WriteByte(' ')
+		gen.writeExpr(s, t.Y, depth)
+	case *ast.IndexExpr:
+		gen.writeExpr(s, t.X, depth)
+		s.WriteByte('<')
+		gen.writeExpr(s, t.Index, depth)
+		s.WriteByte('>')
 	case *ast.IndexListExpr:
-		gen.writeType(t.X, depth, false)
-		gen.writeByte('<')
+		gen.writeExpr(s, t.X, depth)
+		s.WriteByte('<')
 		for i, index := range t.Indices {
-			gen.writeType(index, depth, false)
+			gen.writeExpr(s, index, depth)
 			if i != len(t.Indices)-1 {
-				gen.writeString(", ")
+				s.WriteString(", ")
 			}
 		}
-		gen.writeByte('>')
-	case *ast.IndexExpr:
-		gen.writeType(t.X, depth, false)
-		gen.writeByte('<')
-		gen.writeType(t.Index, depth, false)
-		gen.writeByte('>')
+		s.WriteByte('>')
+	case *ast.Ellipsis:
+		s.WriteString("...")
+		gen.writeExpr(s, t.Elt, depth)
+		s.WriteString("[]")
+	case *ast.InterfaceType:
+		gen.writeInterface(s, t, depth+1)
+	case *ast.StructType:
+		gen.writeStruct(s, t, depth+1)
+	case *ast.ArrayType:
+		gen.writeArray(s, t, depth)
+	case *ast.MapType:
+		gen.writeMap(s, t, depth)
+	case *ast.CallExpr:
+		s.WriteString("any")
 	default:
-		err := fmt.Errorf("unhandled: %s\n %T", t, t)
-		fmt.Println(err)
-		panic(err)
+		panic(fmt.Errorf("unhandled: %s\n %T", t, t))
 	}
 }
 
-func (gen *Generator) writeTypeParamsFields(fields []*ast.Field) {
-	gen.writeByte('<')
+func (gen *Generator) writeTypeParams(s *strings.Builder, fields []*ast.Field) {
+	s.WriteByte('<')
 	for i, f := range fields {
 		for j, ident := range f.Names {
-			gen.writeString(ident.Name)
-			gen.writeString(" extends ")
-			gen.writeType(f.Type, 0, true)
+			s.WriteString(ident.Name)
+			s.WriteString(" extends ")
+			gen.writeExpr(s, f.Type, 0)
 
 			if i != len(fields)-1 || j != len(f.Names)-1 {
-				gen.writeString(", ")
+				s.WriteString(", ")
 			}
 		}
 	}
-	gen.writeByte('>')
+	s.WriteByte('>')
 }
 
-func (gen *Generator) writeInterfaceFields(fields []*ast.Field, depth int) {
-	if len(fields) == 0 { // Type without any fields (probably only has methods)
-		gen.writeString("any")
+func (gen *Generator) writeKey(s *strings.Builder, key string, optional bool) {
+	quoted := !validJSName(key)
+	if quoted {
+		s.WriteByte('\'')
+	}
+	s.WriteString(key)
+	if quoted {
+		s.WriteByte('\'')
+	}
+	if optional {
+		s.WriteByte('?')
+	}
+	s.WriteString(": ")
+}
+
+func (gen *Generator) writeBlockType(s *strings.Builder, fields *ast.FieldList, indent int) {
+	s.WriteString("{\n")
+
+	for _, field := range fields.List {
+		// if the field type is a pointer its considered to be optional
+		_, optional := field.Type.(*ast.StarExpr)
+
+		for _, fName := range field.Names {
+			if !fName.IsExported() {
+				continue
+			}
+
+			name := fName.Name
+			gen.writeIndent(s, indent+1)
+			gen.writeKey(s, name, optional)
+			gen.writeExpr(s, field.Type, indent)
+			s.WriteByte('\n')
+		}
+	}
+
+	gen.writeIndent(s, indent)
+	s.WriteByte('}')
+}
+
+func (gen *Generator) writeInterface(s *strings.Builder, node *ast.InterfaceType, indent int) {
+	gen.writeBlockType(s, node.Methods, indent)
+}
+
+func (gen *Generator) writeStruct(s *strings.Builder, node *ast.StructType, indent int) {
+	gen.writeBlockType(s, node.Fields, indent)
+}
+
+func (gen *Generator) writeMap(s *strings.Builder, node *ast.MapType, indent int) {
+	s.WriteString("{ [key: ")
+	gen.writeExpr(s, node.Key, indent)
+	s.WriteString("]: ")
+	gen.writeExpr(s, node.Value, indent)
+	s.WriteString(" }")
+}
+
+func (gen *Generator) writeArray(s *strings.Builder, node *ast.ArrayType, indent int) {
+	// cast []byte to string
+	if v, ok := node.Elt.(*ast.Ident); ok && v.String() == "byte" {
+		s.WriteString("string")
 		return
 	}
-	gen.writeByte('\n')
-	for _, f := range fields {
-		if _, isFunc := f.Type.(*ast.FuncType); isFunc {
-			continue
-		}
-		gen.writeCommentGroupIfNotNil(f.Doc, depth+1)
-		gen.writeIndent(depth + 1)
-		gen.writeType(f.Type, depth, false)
 
-		if f.Comment != nil {
-			gen.writeString(" // ")
-			gen.writeString(f.Comment.Text())
-		}
-	}
-}
-
-func (gen *Generator) writeStructFields(fields []*ast.Field, depth int) {
-	for _, f := range fields {
-		optional := false
-		required := false
-
-		var fieldName string
-		if len(f.Names) != 0 && f.Names[0] != nil && len(f.Names[0].Name) != 0 {
-			fieldName = f.Names[0].Name
-		}
-		if len(fieldName) == 0 || 'A' > fieldName[0] || fieldName[0] > 'Z' {
-			continue
-		}
-
-		var name string
-		var tstype string
-		if f.Tag != nil {
-			tags, err := structtag.Parse(f.Tag.Value[1 : len(f.Tag.Value)-1])
-			if err != nil {
-				panic(err)
-			}
-
-			jsonTag, err := tags.Get("json")
-			if err == nil {
-				name = jsonTag.Name
-				if name == "-" {
-					continue
-				}
-
-				optional = jsonTag.HasOption("omitempty")
-			}
-			tstypeTag, err := tags.Get("tstype")
-			if err == nil {
-				tstype = tstypeTag.Name
-				if tstype == "-" {
-					continue
-				}
-				required = tstypeTag.HasOption("required")
-			}
-		}
-
-		if len(name) == 0 {
-			name = fieldName
-		}
-
-		gen.writeCommentGroupIfNotNil(f.Doc, depth+1)
-
-		gen.writeIndent(depth + 1)
-		quoted := !validJSName(name)
-		if quoted {
-			gen.writeByte('\'')
-		}
-		gen.writeString(name)
-		if quoted {
-			gen.writeByte('\'')
-		}
-
-		switch t := f.Type.(type) {
-		case *ast.StarExpr:
-			optional = !required
-			f.Type = t.X
-		}
-
-		if optional {
-			gen.writeByte('?')
-		}
-
-		gen.writeString(": ")
-
-		if tstype == "" {
-			gen.writeType(f.Type, depth, false)
-		} else {
-			gen.writeString(tstype)
-		}
-		gen.writeByte(';')
-
-		if f.Comment != nil {
-			// Line comment is present, that means a comment after the field.
-			gen.writeString(" // ")
-			gen.writeString(f.Comment.Text())
-		} else {
-			gen.writeByte('\n')
-		}
-	}
+	s.WriteString("Array<")
+	gen.writeExpr(s, node.Elt, indent)
+	s.WriteByte('>')
 }

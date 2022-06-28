@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/baldwin-dev-co/ts-go/tsgo"
 )
@@ -36,7 +37,8 @@ func main() {
 		return
 	}
 
+	s := new(strings.Builder)
 	gen := tsgo.NewGenerator(nil)
-	gen.ParseAstNode(node)
-	fmt.Println(gen.String())
+	gen.WriteFile(s, node)
+	fmt.Println(s.String())
 }
