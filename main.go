@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/ioutil"
-	"log"
 	"os"
 	"strings"
 
@@ -16,7 +15,7 @@ func main() {
 	// read file
 	file, err := os.Open("test.go")
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("Error opening file: %v\n", err)
 		return
 	}
 	defer file.Close()
@@ -24,7 +23,7 @@ func main() {
 	// read the whole file in
 	srcbuf, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("Error reading file: %v\n", err)
 		return
 	}
 	src := string(srcbuf)
@@ -33,12 +32,15 @@ func main() {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "lib.go", src, 0)
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("Error parsing file: %v\n", err)
 		return
 	}
 
 	s := new(strings.Builder)
-	gen := tsgo.NewGenerator(nil)
-	gen.WriteFile(s, node)
+	err = tsgo.WriteFileDecls(s, node)
 	fmt.Println(s.String())
+	if err != nil {
+		fmt.Printf("Error writing file declarations: %v\n", err)
+		return
+	}
 }

@@ -1,65 +1,69 @@
 package main
 
-import "github.com/google/uuid"
+// Primitive Types
+const boolLit = true
+const strLit = "hello world"
+const runeLit = 'x'
+const intLit = 178
+const floatLit = 56.93
 
-type ComplexType map[string]map[uint16]*uint32
+type boolType bool
+type strType string
+type intType int
+type floatType float64
+type errorType error
+type anyType any
 
-type UserRole = string
-const (
-	UserRoleDefault UserRole = "viewer"
-	UserRoleEditor  UserRole = "editor"
-)
+// Container types
+// var ptrLit *string = nil
+// var sliceLit = []string{}
+// var arrayLit = [8]int{}
+// var mapLit = map[string]float64{}
+// var structLit = struct { A rune; B bool } {}
 
-type UserEntry struct {
-	// Instead of specifying `tstype` we could also declare the typing
-	// for uuid.NullUUID in the config file.
-	ID uuid.NullUUID `json:"id" tstype:"string | null"`
-
-	Preferences map[string]struct {
-		Foo uint32 `json:"foo"`
-		// An unknown type without a `tstype` tag or mapping in the config file
-		// becomes `any`
-		Bar uuid.UUID `json:"bar"`
-	} `json:"prefs"`
-
-	MaybeFieldWithStar *string  `json:"address"`
-	Nickname           string   `json:"nickname,omitempty"`
-	Role               UserRole `json:"role"`
-
-	Complex    ComplexType `json:"complex"`
-	unexported bool        // Unexported fields are omitted
-	Ignored    bool        `tstype:"-"` // Fields with - are omitted too
+type ptrType *uint16
+type sliceType []int64
+type arrayType [8]float32
+type mapType map[float32]byte
+type structType struct {
+	A string
+	B complex128
+	unexported bool
 }
-
-type ListUsersResponse struct {
-	Users []UserEntry `json:"users"`
-	X, Y *int
+type embeddedStructType struct {
+	structType
+	C float64
 }
+type genericStructType[T1 string, T2 any] struct {
+	A T1
+	B T2
+	C string
+}
+// type emptyInterfaceType interface {}
+// type interfaceType interface {
+// 	MethodA(string, int) error
+// 	MethodB(rune, int32)
+// }
+// type embeddedInterfaceType interface {
+// 	interfaceType
+// 	MethodC() string
+// }
+// type typeSetType interface {
+// 	string | int
+// }
 
-type MyIotaType int
+// // Func types
+func funcLit(A int8, B string) error { return nil }
+func (recv *structType) methodLit(A uint32) {}
+func multipleResults() (string, int, error) { return "", 0, nil }
+func namedResults() (str string, err error) { return "", nil }
+// func genericFuncLit[T1 typeSetType, T2 ~int]() {}
 
-const (
-	Zero MyIotaType = iota
-	One
-	Two
-	_
-	Four
-	FourString string = "four"
-	_
-	AlsoFourString
-	Five = 5
-	FiveAgain
-
-	Sixteen = iota + 6
-	Seventeen
-)
-
-const (
-	_One = "one"
-	_Two = 2
-	Three int = 3
-)
-
-func Hello(name, lastname string, age *int, other ...string) {
-	// return "", nil
+// Nested types
+type nestedMap map[string]struct {A, B int}
+type nestedSlice []map[int]map[string][]any
+type nestedArray [8][]uint64
+type nestedStruct struct {
+	A map[string]int
+	B []complex64
 }
