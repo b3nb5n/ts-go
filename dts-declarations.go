@@ -68,21 +68,18 @@ func WriteDecl(s *strings.Builder, decl ast.Decl) error {
 func WriteVarDecl(s *strings.Builder, spec *ast.ValueSpec) error {
 	if spec == nil {
 		return fmt.Errorf("Recieved nil value spec")
+	} else if spec.Type == nil {
+		return fmt.Errorf("Untyped variable declarations are unsupported")
 	}
 
 	s.WriteString("declare let ")
 
-	var typeStr string
-	if spec.Type != nil {
-		tmpS := new(strings.Builder)
-		err := writeTypeof(s, spec.Type)
-		if err != nil {
-			return fmt.Errorf("Error writing variable type: %v", err)
-		}
-		typeStr = tmpS.String()
-	} else {
-		return fmt.Errorf("Untyped variable declarations are unsupported")
+	tmpS := new(strings.Builder)
+	err := WriteTypeof(s, spec.Type)
+	if err != nil {
+		return fmt.Errorf("Error writing variable type: %v", err)
 	}
+	typeStr := tmpS.String()
 
 	for i, name := range spec.Names {
 		s.WriteString(name.Name + ": " + typeStr)
@@ -105,7 +102,7 @@ func WriteConstDecl(s *strings.Builder, spec *ast.ValueSpec) error {
 	var typeStr string
 	if spec.Type != nil {
 		tmpS := new(strings.Builder)
-		err := writeTypeof(tmpS, spec.Type)
+		err := WriteTypeof(tmpS, spec.Type)
 		if err != nil {
 			return fmt.Errorf("Error writing type: %v", err)
 		}
@@ -138,7 +135,7 @@ func WriteFuncDecl(s *strings.Builder, fn *ast.FuncDecl) error {
 	}
 
 	s.WriteString("declare const " + fn.Name.Name + ": ")
-	err := writeTypeofFunc(s, fn.Type)
+	err := WriteTypeofFunc(s, fn.Type)
 	if err != nil {
 		return fmt.Errorf("Error writing type: %v", err)
 	}
@@ -159,7 +156,7 @@ func WriteTypeDecl(s *strings.Builder, spec *ast.TypeSpec) error {
 	}
 
 	s.WriteString(" = ")
-	err = writeTypeof(s, spec.Type)
+	err = WriteTypeof(s, spec.Type)
 	if err != nil {
 		return fmt.Errorf("Error writing type: %v", err)
 	}

@@ -23,6 +23,13 @@ func writeConstantValue(s *strings.Builder, expr ast.Expr) error {
 		writeConstantValue(s, expr.X)
 		s.WriteString(" " + expr.Op.String() + " ")
 		writeConstantValue(s, expr.Y)
+	case *ast.ParenExpr:
+		s.WriteByte('(')
+		err := writeConstantValue(s, expr.X)
+		if err != nil {
+			return err
+		}
+		s.WriteByte(')')
 	default:
 		return fmt.Errorf("Unrecognized constant value")
 	}
